@@ -4,6 +4,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <netdb.h>
+#include <arpa/inet.h>
 
 void print_help(char *prog_name) {
   printf("Usage: %s <URL> [-l <latency>] [-t <times>] [-q] [-h] [-T] [-P] [-N] -[M] \n", prog_name);
@@ -17,9 +19,9 @@ void print_help(char *prog_name) {
   printf("  -q              Quiet mode (suppress success message)\n");
   printf("  -h              Display this help message\n");
   printf("  -P <url>        Set the webhook's profile url (default: \"https://example.com/avatar.png\")\n");
-  printf("  -N <string>     Set the webhook's user name (default: \"Webhook Spammer\")\n");
+  printf("  -N <string>     Set the webhook's user name (default: \"Webhook Tester\")\n");
   printf(
-      "  -M <string>     Set the webhook's message content (default: \"Webhook Spammer\")\n");
+      "  -M <string>     Set the webhook's message content (default: \"Webhook Tester\")\n");
 }
 
 size_t WriteCallback(void *contents, size_t size, size_t nmemb, void *userp) {
@@ -43,6 +45,8 @@ struct pingArgs {
   int times;
   int latency;
   char quiet_mode;
+  char *resolved_ip;
+  char *hostname;
 };
 
 void *pingThread(void *arg) {
@@ -52,22 +56,27 @@ void *pingThread(void *arg) {
   CURLcode res;
   curl_global_init(CURL_GLOBAL_DEFAULT);
 
+  char resolve_string[256];
+  snprintf(resolve_string, sizeof(resolve_string), "%s:443:%s", args.hostname, args.resolved_ip);
+
+  struct curl_slist *host = NULL;
+  host = curl_slist_append(host, resolve_string);
+
   for (int i = 0; i < args.times; i++) {
     curl = curl_easy_init();
     if (curl) {
       curl_easy_setopt(curl, CURLOPT_URL, args.url);
       curl_easy_setopt(curl, CURLOPT_POST, 1L);
-      curl_easy_setopt(
-          curl, CURLOPT_HTTPHEADER,
-          curl_slist_append(NULL, "Content-Type: application/json"));
+      curl_easy_setopt(curl, CURLOPT_HTTPHEADER, curl_slist_append(NULL, "Content-Type: application/json"));
+
+      curl_easy_setopt(curl, CURLOPT_RESOLVE, host);
 
       curl_easy_setopt(curl, CURLOPT_POSTFIELDS, args.payload);
 
       res = curl_easy_perform(curl);
 
       if (res != CURLE_OK) {
-        fprintf(stderr, "curl_easy_perform() failed: %s\n",
-                curl_easy_strerror(res));
+        fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
       } else {
         if (!args.quiet_mode) {
           printf("Ping %d: JSON sent successfully\n", i + 1);
@@ -81,8 +90,53 @@ void *pingThread(void *arg) {
     }
   }
 
+  curl_slist_free_all(host);
   curl_global_cleanup();
   return NULL;
+}
+
+char *resolve_domain(const char *domain) {
+  struct addrinfo hints, *res;
+  int errcode;
+  char *ipstr = malloc(INET6_ADDRSTRLEN);
+
+  memset(&hints, 0, sizeof(hints));
+  hints.ai_family = AF_UNSPEC;
+  hints.ai_socktype = SOCK_STREAM;
+
+  if ((errcode = getaddrinfo(domain, NULL, &hints, &res)) != 0) {
+    fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(errcode));
+    return NULL;
+  }
+
+  void *addr;
+  if (res->ai_family == AF_INET) {
+    struct sockaddr_in *ipv4 = (struct sockaddr_in *)res->ai_addr;
+    addr = &(ipv4->sin_addr);
+  } else {
+    struct sockaddr_in6 *ipv6 = (struct sockaddr_in6 *)res->ai_addr;
+    addr = &(ipv6->sin6_addr);
+  }
+
+  inet_ntop(res->ai_family, addr, ipstr, INET6_ADDRSTRLEN);
+  freeaddrinfo(res);
+
+  return ipstr;
+}
+
+char *extract_hostname(const char *url) {
+  char *hostname = malloc(strlen(url));
+  char *protocol_separator = strstr(url, "://");
+  if (protocol_separator == NULL) {
+    strcpy(hostname, url);
+  } else {
+    strcpy(hostname, protocol_separator + 3);
+  }
+  char *path_separator = strchr(hostname, '/');
+  if (path_separator != NULL) {
+    *path_separator = '\0';
+  }
+  return hostname;
 }
 
 int main(int argc, char **argv) {
@@ -94,7 +148,7 @@ int main(int argc, char **argv) {
   char *url = NULL;
 
   char *pUrl = "https://example.com/avatar.png";
-  char *pName = "Webhook Spammer";
+  char *pName = "Webhook Tool";
   char *pContent = "Hello, world!";
 
   int latency = 1;
@@ -143,7 +197,15 @@ int main(int argc, char **argv) {
       "{\"content\": \"%s\", \"username\": \"%s\", \"avatar_url\": \"%s\"}",
       pContent, pName, pUrl);
 
-  struct pingArgs args = {url, payload, times, latency, quiet_mode};
+  char *hostname = extract_hostname(url);
+  char *resolved_ip = resolve_domain(hostname);
+  if (resolved_ip == NULL) {
+    fprintf(stderr, "Failed to resolve domain.\n");
+    free(hostname);
+    return 1;
+  }
+
+  struct pingArgs args = {url, payload, times, latency, quiet_mode, resolved_ip, hostname};
 
   if (threads == 1) {
     pingThread((void *)&args);
@@ -163,5 +225,7 @@ int main(int argc, char **argv) {
     free(thls);
   }
 
+  free(resolved_ip);
+  free(hostname);
   return 0;
 }

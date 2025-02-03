@@ -1,0 +1,3 @@
+/home/keegan/Github/WHS/build/CMakeFiles/WebhookUtil.dir
+/home/keegan/Github/WHS/build/CMakeFiles/edit_cache.dir
+/home/keegan/Github/WHS/build/CMakeFiles/rebuild_cache.dir

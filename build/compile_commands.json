@@ -1,0 +1,8 @@
+[
+{
+  "directory": "/home/keegan/Github/WHS/build",
+  "command": "/usr/bin/clang -g -O3 -o CMakeFiles/WebhookUtil.dir/WebhookUtil.c.o -c /home/keegan/Github/WHS/WebhookUtil.c",
+  "file": "/home/keegan/Github/WHS/WebhookUtil.c",
+  "output": "CMakeFiles/WebhookUtil.dir/WebhookUtil.c.o"
+}
+]
